@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iOS 全版本電池健康度檢測 (通用版)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f2f2f7;
+            color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            background-color: #fff;
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+        }
+
+        h2 {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #007aff;
+        }
+
+        .subtitle {
+            text-align: center;
+            font-size: 0.85em;
+            color: #8e8e93;
+            margin-bottom: 20px;
+        }
+
+        .instruction {
+            font-size: 0.9em;
+            color: #333;
+            margin-bottom: 15px;
+            line-height: 1.6;
+            background: #eef1f5;
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .instruction code {
+            background-color: #d1d1d6;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: bold;
+        }
+
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 12px;
+            border: 1px solid #c7c7cc;
+            border-radius: 10px;
+            font-size: 13px;
+            box-sizing: border-box;
+            resize: vertical;
+            margin-bottom: 15px;
+            font-family: monospace; /* 等寬字體方便看 log */
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #007aff;
+        }
+
+        button {
+            width: 100%;
+            background-color: #007aff;
+            color: white;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #005bb5;
+        }
+
+        .result-box {
+            margin-top: 20px;
+            display: none;
+            background: #f9f9f9;
+            border-radius: 12px;
+            padding: 15px;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #e5e5ea;
+        }
+
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label { color: #555; }
+        .stat-value { font-weight: bold; color: #000; }
+
+        .tag-new { background: #e3f2fd; color: #007aff; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }
+        .tag-old { background: #fff3e0; color: #ff9800; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2⚡️ 全能電池檢測</h2>
+    <div class="subtitle">🍎 電池健康度檢測</div>
+    
+    <div class="instruction">
+        <strong>第一步：找到正確的檔案</strong><br>
+        前往「設定 > 隱私權 > 分析與改進功能 > 分析資料」<br>
+        <ul>
+            <li>iOS 16+ (新版)：找 <code>Analytics-202x...</code></li>
+            <li>iOS 15- (舊版)：找 <code>log-aggregated-202x...</code></li>
+        </ul>
+        <strong>第二步：</strong>複製內容並貼於下方。
+    </div>
+
+    <textarea id="logInput" placeholder="請在此貼上 Analytics 或 log-aggregated 的內容..."></textarea>
+    
+    <button onclick="analyzeBattery()">開始全面分析</button>
+
+    <div id="resultArea" class="result-box">
+        <h3>檢測報告：</h3>
+        <div class="stat-item">
+            <span class="stat-label">日誌格式版本</span>
+            <span class="stat-value" id="logType">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">循環次數 (Cycles)</span>
+            <span class="stat-value" id="cycleCount">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">最大容量 (Design %)</span>
+            <span class="stat-value" id="maxCapacity">--</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    function analyzeBattery() {
+        const input = document.getElementById('logInput').value;
+        const resultArea = document.getElementById('resultArea');
+        const logTypeEl = document.getElementById('logType');
+        const cycleEl = document.getElementById('cycleCount');
+        const capEl = document.getElementById('maxCapacity');
+        
+        if (!input.trim()) {
+            alert("請先貼上日誌內容！");
+            return;
+        }
+
+        let cycles = null;
+        let capacity = null;
+        let detectedType = "未知/無法辨識";
+
+        // --- 策略 A：針對新版 iOS (16, 17, 18+) ---
+        // 特徵：JSON 格式，關鍵字為 last_value_CycleCount
+        const newCycleRegex = /"last_value_CycleCount"\s*:\s*(\d+)/;
+        const newCapRegex = /"last_value_MaximumCapacityPercent"\s*:\s*(\d+)/;
+
+        if (newCycleRegex.test(input)) {
+            detectedType = '<span class="tag-new">新版 (Analytics)</span>';
+            const cycleMatch = input.match(newCycleRegex);
+            const capMatch = input.match(newCapRegex);
+            
+            if (cycleMatch) cycles = cycleMatch[1];
+            if (capMatch) capacity = capMatch[1];
+        } 
+        
+        // --- 策略 B：針對舊版 iOS (10 - 15) ---
+        // 特徵：XML Plist 格式，關鍵字被 <key> 包裹
+        // 結構通常是： <key>...CycleCount</key> (換行) <integer>123</integer>
+        else {
+            // 使用 [\s\S]*? 來匹配標籤中間可能包含的換行符號
+            const oldCycleRegex = /<key>com\.apple\.power\.battery\.CycleCount<\/key>[\s\S]*?<integer>(\d+)<\/integer>/;
+            const oldCapRegex = /<key>com\.apple\.power\.battery\.MaximumCapacityPercent<\/key>[\s\S]*?<integer>(\d+)<\/integer>/;
+
+            if (oldCycleRegex.test(input)) {
+                detectedType = '<span class="tag-old">舊版 (Aggregated)</span>';
+                const cycleMatch = input.match(oldCycleRegex);
+                const capMatch = input.match(oldCapRegex);
+
+                if (cycleMatch) cycles = cycleMatch[1];
+                if (capMatch) capacity = capMatch[1];
+            }
+        }
+
+        // --- 顯示結果 ---
+        logTypeEl.innerHTML = detectedType;
+        
+        if (cycles) {
+            cycleEl.textContent = cycles + " 次";
+            cycleEl.style.color = "#000";
+        } else {
+            cycleEl.textContent = "未找到數據";
+            cycleEl.style.color = "#999";
+        }
+
+        if (capacity) {
+            capEl.textContent = capacity + "%";
+            // 健康度顏色標示
+            if (parseInt(capacity) < 80) {
+                capEl.style.color = "#ff3b30"; // 紅色
+                capEl.innerHTML += " (建議更換)";
+            } else {
+                capEl.style.color = "#34c759"; // 綠色
+            }
+        } else {
+            capEl.textContent = "未找到數據";
+            capEl.style.color = "#999";
+        }
+
+        resultArea.style.display = 'block';
+    }
+</script>
+
+</body>
+</html>
