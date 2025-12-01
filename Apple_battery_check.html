@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iOS 電池日誌分析 </title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f2f2f7;
+            color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            background-color: #fff;
+            padding: 24px;
+            border-radius: 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+        }
+
+        h2 { margin-bottom: 5px; color: #007aff; }
+        .subtitle { font-size: 0.9em; color: #8e8e93; margin-bottom: 20px; }
+
+        /* 上傳區塊樣式 */
+        .upload-area {
+            border: 2px dashed #c7c7cc;
+            border-radius: 12px;
+            padding: 30px 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background-color: #fafafa;
+            position: relative;
+        }
+
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #007aff;
+            background-color: #f0f8ff;
+        }
+
+        .upload-icon { font-size: 40px; margin-bottom: 10px; display: block; }
+        .upload-text { font-size: 16px; color: #333; font-weight: 500; }
+        .upload-sub { font-size: 13px; color: #888; margin-top: 5px; }
+
+        /* 隱藏原本的 file input，用樣式蓋在上面 */
+        #fileInput {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .result-box {
+            margin-top: 25px;
+            display: none;
+            background: #f9f9f9;
+            border-radius: 16px;
+            padding: 20px;
+            text-align: left;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #e5e5ea;
+        }
+        .stat-item:last-child { border-bottom: none; }
+        .stat-label { color: #555; }
+        .stat-value { font-weight: bold; color: #000; }
+
+        .loading { display: none; margin-top: 15px; color: #007aff; }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🍎 電池日誌分析器</h2>
+    <div class="subtitle">支援 iOS 全版本・檔案上傳模式</div>
+
+    <div class="upload-area" id="dropZone">
+        <span class="upload-icon">📄</span>
+        <div class="upload-text">點擊選擇檔案</div>
+        <div class="upload-sub">支援 Analytics 或 log-aggregated 檔案</div>
+        <input type="file" id="fileInput" accept=".txt,.ips,.synced,.json">
+    </div>
+
+    <div id="loading" class="loading">正在讀取檔案...</div>
+
+    <div id="resultArea" class="result-box">
+        <div class="stat-item">
+            <span class="stat-label">檔案類型</span>
+            <span class="stat-value" id="logType">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">循環次數 (Cycle)</span>
+            <span class="stat-value" id="cycleCount">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">原始最大容量</span>
+            <span class="stat-value" id="maxCapacity">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">建議狀態</span>
+            <span class="stat-value" id="healthStatus">--</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const resultArea = document.getElementById('resultArea');
+    const loading = document.getElementById('loading');
+
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // 顯示載入中
+        loading.style.display = 'block';
+        resultArea.style.display = 'none';
+
+        const reader = new FileReader();
+        
+        reader.onload = function(e) {
+            const content = e.target.result;
+            analyzeContent(content);
+            loading.style.display = 'none';
+        };
+
+        reader.onerror = function() {
+            alert("讀取檔案失敗！");
+            loading.style.display = 'none';
+        };
+
+        // 讀取檔案內容
+        reader.readAsText(file);
+    });
+
+    function analyzeContent(input) {
+        let cycles = null;
+        let capacity = null;
+        let detectedType = "未知";
+
+        // 新版 iOS (16+) Regex
+        const newCycleRegex = /"last_value_CycleCount"\s*:\s*(\d+)/;
+        const newCapRegex = /"last_value_MaximumCapacityPercent"\s*:\s*(\d+)/;
+
+        // 舊版 iOS (15-) Regex
+        const oldCycleRegex = /<key>com\.apple\.power\.battery\.CycleCount<\/key>[\s\S]*?<integer>(\d+)<\/integer>/;
+        const oldCapRegex = /<key>com\.apple\.power\.battery\.MaximumCapacityPercent<\/key>[\s\S]*?<integer>(\d+)<\/integer>/;
+
+        if (newCycleRegex.test(input)) {
+            detectedType = "新版 (Analytics)";
+            const cMatch = input.match(newCycleRegex);
+            const capMatch = input.match(newCapRegex);
+            if (cMatch) cycles = cMatch[1];
+            if (capMatch) capacity = capMatch[1];
+        } else if (oldCycleRegex.test(input)) {
+            detectedType = "舊版 (Aggregated)";
+            const cMatch = input.match(oldCycleRegex);
+            const capMatch = input.match(oldCapRegex);
+            if (cMatch) cycles = cMatch[1];
+            if (capMatch) capacity = capMatch[1];
+        } else {
+            alert("無法在檔案中找到電池數據，請確認您上傳的是正確的 Analytics 或 log-aggregated 檔案。");
+            return;
+        }
+
+        // 渲染結果
+        document.getElementById('logType').textContent = detectedType;
+        document.getElementById('cycleCount').textContent = cycles ? cycles + " 次" : "未找到";
+        
+        const capEl = document.getElementById('maxCapacity');
+        const statusEl = document.getElementById('healthStatus');
+        
+        if (capacity) {
+            capEl.textContent = capacity + "%";
+            if (parseInt(capacity) >= 80) {
+                capEl.style.color = "#34c759";
+                statusEl.innerHTML = "<span style='color:#34c759'>健康</span>";
+            } else {
+                capEl.style.color = "#ff3b30";
+                statusEl.innerHTML = "<span style='color:#ff3b30'>需維修</span>";
+            }
+        } else {
+            capEl.textContent = "未找到";
+            statusEl.textContent = "--";
+        }
+
+        resultArea.style.display = 'block';
+    }
+</script>
+
+</body>
+</html>
